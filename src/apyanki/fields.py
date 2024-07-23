@@ -8,12 +8,14 @@ from typing import Optional, TYPE_CHECKING
 import warnings
 
 from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning, Tag
-import markdown
-from markdown.extensions.abbr import AbbrExtension
-from markdown.extensions.codehilite import CodeHiliteExtension
-from markdown.extensions.def_list import DefListExtension
-from markdown.extensions.fenced_code import FencedCodeExtension
-from markdown.extensions.footnotes import FootnoteExtension
+from markdown_it import MarkdownIt
+from markdown_it.common.utils import escapeHtml
+from mdit_py_plugins.footnote import footnote_plugin
+from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.deflist import deflist_plugin
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name
 from markdownify import markdownify as to_md
 
 from apyanki.config import cfg
@@ -24,6 +26,25 @@ if TYPE_CHECKING:
 
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
+
+
+# For some reason, the dollarmath renderer of mdit-py-plugins doesn't add the math
+# delimiters required by MathJax. A comment in mdit_py_plugins/dollarmath/index.py says
+# that the current render rules are just for testing, perhaps that's why.
+# See also: https://github.com/executablebooks/mdit-py-plugins/pull/61
+def render_mathjax(string, opt):
+    """Add LaTeX-style math delimiters (for MathJax) and escape for HTML."""
+    if opt['display_mode']:
+        return '\\[' + escapeHtml(string) + '\\]'
+    else:
+        return '\\(' + escapeHtml(string) + '\\)'
+
+
+def syntax_highlight(code, lang, lang_attrs):
+    """Syntax-highlight a block of code"""
+    lexer = get_lexer_by_name(lang)
+    formatter = HtmlFormatter()
+    return highlight(code, lexer, formatter)
 
 
 def prepare_field_for_cli(
@@ -225,37 +246,32 @@ def _convert_markdown_to_field(text: str) -> str:
     ).decode()
 
     # For convenience: Escape some common LaTeX constructs
-    text = text.replace(r"\\", r"\\\\")
-    text = text.replace(r"\{", r"\\{")
-    text = text.replace(r"\}", r"\\}")
-    text = text.replace(r"*}", r"\*}")
+    #text = text.replace(r"\\", r"\\\\")
+    #text = text.replace(r"\{", r"\\{")
+    #text = text.replace(r"\}", r"\\}")
+    #text = text.replace(r"*}", r"\*}")
 
     # Fix whitespaces in input
     text = text.replace("\xc2\xa0", " ").replace("\xa0", " ")
 
     # For convenience: Fix mathjax escaping
-    text = text.replace(r"\[", r"\\[")
-    text = text.replace(r"\]", r"\\]")
-    text = text.replace(r"\(", r"\\(")
-    text = text.replace(r"\)", r"\\)")
+    #text = text.replace(r"\[", r"\\[")
+    #text = text.replace(r"\]", r"\\]")
+    #text = text.replace(r"\(", r"\\(")
+    #text = text.replace(r"\)", r"\\)")
 
-    html = markdown.markdown(
-        text,
-        extensions=[
-            "tables",
-            AbbrExtension(),
-            CodeHiliteExtension(
-                noclasses=True,
-                linenums=False,
-                pygments_style=cfg["markdown_pygments_style"],
-                guess_lang=False,
-            ),
-            DefListExtension(),
-            FencedCodeExtension(),
-            FootnoteExtension(),
-        ],
-        output_format="html",
-    )
+    # Documentation:
+    # - https://markdown-it-py.readthedocs.io/en/latest/using.html
+    # - https://mdit-py-plugins.readthedocs.io/en/latest
+    md = MarkdownIt("commonmark", {
+        "highlight": syntax_highlight,
+        })
+    md.use(footnote_plugin)
+    md.use(deflist_plugin)
+    md.use(dollarmath_plugin, double_inline = True, renderer=render_mathjax)
+    md.enable('table')
+
+    html = md.render(text)
 
     html_tree = BeautifulSoup(html, "html.parser")
 
